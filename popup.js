@@ -3,6 +3,7 @@ class SKYProxy {
       this.profiles = [];
       this.activeProfile = null;
       this.initUI();
+      this.initListeners();
       this.loadProfiles();
     }
   
@@ -10,17 +11,20 @@ class SKYProxy {
       const container = document.createElement('div');
       container.className = 'container';
       container.innerHTML = `
-        <div id="status" class="status"></div>
-        
         <div class="header">
           <h2 style="margin:0">SKY-Proxy</h2>
-          <div class="header-actions">
-            <button id="disableProxyBtn" class="btn btn-warning">Disable Proxy</button>
+          <div style="display:flex;gap:12px;align-items:center">
+            <label class="switch">
+              <input type="checkbox" id="globalProxySwitch">
+              <span class="slider"></span>
+            </label>
             <button id="addProfileBtn" class="btn btn-primary">Add Profile</button>
           </div>
         </div>
   
         <div id="proxyList" class="proxy-list"></div>
+        
+        <div id="statusBar" class="status-bar"></div>
   
         <div id="profileModal" class="modal">
           <div class="modal-content">
@@ -54,22 +58,35 @@ class SKYProxy {
       `;
   
       document.getElementById('app').appendChild(container);
+    }
   
-      // Add event listeners
+    async initListeners() {
       document.getElementById('addProfileBtn').addEventListener('click', () => this.showProfileModal());
       document.getElementById('saveProfileBtn').addEventListener('click', () => this.saveProfile());
       document.getElementById('cancelProfileBtn').addEventListener('click', () => this.hideProfileModal());
-      document.getElementById('disableProxyBtn').addEventListener('click', () => this.disableProxy());
+      
+      const globalSwitch = document.getElementById('globalProxySwitch');
+      globalSwitch.addEventListener('change', async (e) => {
+        if (e.target.checked) {
+          if (this.activeProfile !== null) {
+            const profile = this.profiles[this.activeProfile];
+            await this.activateProfile(this.activeProfile);
+          } else if (this.profiles.length > 0) {
+            await this.activateProfile(0);
+          } else {
+            e.target.checked = false;
+            this.showStatus('No proxy profile available', true);
+          }
+        } else {
+          await this.disableProxy();
+        }
+      });
     }
   
     showStatus(message, isError = false) {
-      const statusDiv = document.getElementById('status');
-      statusDiv.className = `status ${isError ? 'error' : 'success'}`;
-      statusDiv.textContent = message;
-      setTimeout(() => {
-        statusDiv.textContent = '';
-        statusDiv.className = 'status';
-      }, 3000);
+      const statusBar = document.getElementById('statusBar');
+      statusBar.textContent = message;
+      statusBar.className = `status-bar show ${isError ? 'error' : 'success'}`;
     }
   
     async loadProfiles() {
@@ -77,6 +94,10 @@ class SKYProxy {
       this.profiles = proxyProfiles;
       const { activeProfileId } = await chrome.storage.local.get('activeProfileId');
       this.activeProfile = activeProfileId;
+  
+      const globalSwitch = document.getElementById('globalProxySwitch');
+      globalSwitch.checked = this.activeProfile !== null;
+  
       this.renderProxyList();
     }
   
@@ -87,17 +108,18 @@ class SKYProxy {
       this.profiles.forEach((profile, index) => {
         const item = document.createElement('div');
         item.className = `proxy-item ${this.activeProfile === index ? 'active' : ''}`;
+        
         item.innerHTML = `
           <div class="profile-info">
-            <span>${profile.name}</span>
+            <span>${profile.name || profile.config.rules.singleProxy.host}</span>
             <span class="tag tag-${profile.config.rules.singleProxy.scheme}">
               ${profile.config.rules.singleProxy.scheme.toUpperCase()}
             </span>
           </div>
           <div class="actions">
-            <button class="btn btn-secondary test-btn" data-index="${index}">Test</button>
-            <button class="btn btn-secondary edit-btn" data-index="${index}">Edit</button>
-            <button class="btn btn-secondary delete-btn" data-index="${index}">Delete</button>
+            <button class="btn test-btn" data-index="${index}">Test</button>
+            <button class="btn edit-btn" data-index="${index}">Edit</button>
+            <button class="btn delete-btn" data-index="${index}">Delete</button>
           </div>
         `;
   
@@ -140,7 +162,7 @@ class SKYProxy {
       const bypassInput = document.getElementById('bypassList');
   
       if (profile) {
-        nameInput.value = profile.name;
+        nameInput.value = profile.name || '';
         typeSelect.value = profile.config.rules.singleProxy.scheme;
         hostInput.value = profile.config.rules.singleProxy.host;
         portInput.value = profile.config.rules.singleProxy.port;
@@ -170,13 +192,13 @@ class SKYProxy {
         .map(item => item.trim())
         .filter(item => item);
   
-      if (!name || !host || !port) {
-        this.showStatus('Please fill in all required fields', true);
+      if (!host || !port) {
+        this.showStatus('Please fill in host and port', true);
         return;
       }
   
       const profile = {
-        name,
+        name: name || host,
         config: {
           mode: "fixed_servers",
           rules: {
@@ -197,21 +219,25 @@ class SKYProxy {
       this.showStatus('Profile saved successfully');
     }
   
+    async editProfile(index) {
+      this.editingIndex = index;
+      this.showProfileModal(this.profiles[index]);
+    }
+  
     async deleteProfile(index) {
       if (confirm('Are you sure you want to delete this profile?')) {
-        this.profiles.splice(index, 1);
         if (this.activeProfile === index) {
-          this.activeProfile = null;
           await this.disableProxy();
+        } else if (this.activeProfile > index) {
+          this.activeProfile--;
         }
+        
+        this.profiles.splice(index, 1);
         await chrome.storage.local.set({ proxyProfiles: this.profiles });
+        
         this.renderProxyList();
         this.showStatus('Profile deleted');
       }
-    }
-  
-    editProfile(index) {
-      this.showProfileModal(this.profiles[index]);
     }
   
     async activateProfile(index) {
@@ -225,13 +251,15 @@ class SKYProxy {
         if (response.success) {
           this.activeProfile = index;
           await chrome.storage.local.set({ activeProfileId: index });
+          document.getElementById('globalProxySwitch').checked = true;
           this.renderProxyList();
-          this.showStatus(`Activated profile: ${profile.name}`);
+          this.showStatus(`✓ Activated: ${profile.name}`);
         } else {
-          this.showStatus('Failed to activate profile', true);
+          this.showStatus('✗ Failed to activate profile', true);
         }
       } catch (error) {
-        this.showStatus('Failed to activate profile', true);
+        console.error('Activation error:', error);
+        this.showStatus('✗ Failed to activate profile', true);
       }
     }
   
@@ -240,18 +268,51 @@ class SKYProxy {
       this.showStatus('Testing connection...');
       
       try {
-        const response = await chrome.runtime.sendMessage({
-          type: 'TEST_PROXY',
-          config: profile.config
+        // 保存当前配置
+        const currentConfig = await chrome.proxy.settings.get({});
+        
+        // 临时设置要测试的代理
+        await chrome.runtime.sendMessage({ 
+          type: 'SET_PROXY', 
+          config: profile.config 
         });
         
-        if (response.success) {
-          this.showStatus(`Connection successful: ${response.ip}`);
+        // 测试连接
+        const response = await chrome.runtime.sendMessage({
+          type: 'TEST_PROXY'
+        });
+        
+        // 恢复原始配置
+        if (this.activeProfile !== null) {
+          const activeProfile = this.profiles[this.activeProfile];
+          await chrome.runtime.sendMessage({ 
+            type: 'SET_PROXY', 
+            config: activeProfile.config 
+          });
         } else {
-          this.showStatus('Connection failed', true);
+          await chrome.runtime.sendMessage({ 
+            type: 'SET_PROXY', 
+            config: { mode: "direct" } 
+          });
+        }
+        
+        if (response.success) {
+          this.showStatus(`✓ Test successful: ${response.ip}`);
+        } else {
+          this.showStatus('✗ Test failed', true);
         }
       } catch (error) {
-        this.showStatus('Connection test failed', true);
+        console.error('Test error:', error);
+        this.showStatus('✗ Test failed', true);
+        
+        // 确保恢复原始配置
+        if (this.activeProfile !== null) {
+          const activeProfile = this.profiles[this.activeProfile];
+          await chrome.runtime.sendMessage({ 
+            type: 'SET_PROXY', 
+            config: activeProfile.config 
+          });
+        }
       }
     }
   
@@ -261,16 +322,17 @@ class SKYProxy {
         await chrome.runtime.sendMessage({ type: 'SET_PROXY', config });
         this.activeProfile = null;
         await chrome.storage.local.set({ activeProfileId: null });
+        document.getElementById('globalProxySwitch').checked = false;
         this.renderProxyList();
-        this.showStatus('Proxy disabled');
+        this.showStatus('✓ Proxy disabled');
       } catch (error) {
-        this.showStatus('Failed to disable proxy', true);
+        console.error('Disable error:', error);
+        this.showStatus('✗ Failed to disable proxy', true);
       }
     }
   }
   
   // Initialize the proxy manager when the popup loads
-  let proxyManager;
   document.addEventListener('DOMContentLoaded', () => {
-    proxyManager = new SKYProxy();
+    new SKYProxy();
   });

@@ -4,32 +4,31 @@ const setProxy = async (config) => {
         value: config,
         scope: 'regular'
       });
-      return true;
+      return { success: true };
     } catch (error) {
       console.error('Failed to set proxy:', error);
-      return false;
+      return { success: false, error: error.message };
+    }
+  };
+  
+  const testConnection = async () => {
+    try {
+      const response = await fetch('https://api.ipify.org?format=json');
+      const data = await response.json();
+      return { success: true, ip: data.ip };
+    } catch (error) {
+      return { success: false, error: error.message };
     }
   };
   
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.type === 'SET_PROXY') {
-      setProxy(request.config).then(success => {
-        sendResponse({ success });
-      });
+      setProxy(request.config).then(sendResponse);
       return true;
     }
     
     if (request.type === 'TEST_PROXY') {
-      fetch('https://api.ipify.org?format=json', {
-        mode: 'no-cors'
-      })
-      .then(response => response.json())
-      .then(data => {
-        sendResponse({ success: true, ip: data.ip });
-      })
-      .catch(error => {
-        sendResponse({ success: false, error: error.message });
-      });
+      testConnection().then(sendResponse);
       return true;
     }
   });
