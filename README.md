@@ -1,0 +1,2 @@
+# SKY-EasyProxy
+学习FalconProxy的设计思路，制作的基于MFv3的Chrome快速代理切换控制软件
