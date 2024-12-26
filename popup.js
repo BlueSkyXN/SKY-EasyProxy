@@ -14,7 +14,10 @@ class SKYProxy {
         
         <div class="header">
           <h2 style="margin:0">SKY-Proxy</h2>
-          <button id="addProfileBtn" class="btn btn-primary">Add Profile</button>
+          <div class="header-actions">
+            <button id="disableProxyBtn" class="btn btn-warning">Disable Proxy</button>
+            <button id="addProfileBtn" class="btn btn-primary">Add Profile</button>
+          </div>
         </div>
   
         <div id="proxyList" class="proxy-list"></div>
@@ -56,6 +59,7 @@ class SKYProxy {
       document.getElementById('addProfileBtn').addEventListener('click', () => this.showProfileModal());
       document.getElementById('saveProfileBtn').addEventListener('click', () => this.saveProfile());
       document.getElementById('cancelProfileBtn').addEventListener('click', () => this.hideProfileModal());
+      document.getElementById('disableProxyBtn').addEventListener('click', () => this.disableProxy());
     }
   
     showStatus(message, isError = false) {

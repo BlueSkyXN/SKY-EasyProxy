@@ -52,9 +52,49 @@
     }
 
     .proxy-item button {
-      padding: 4px 12px;
+      padding: 6px 12px;
       font-size: 13px;
       min-width: 60px;
+      border-radius: 6px;
+      font-weight: 500;
+      letter-spacing: 0.3px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+    }
+    
+    .proxy-item .test-btn {
+      background: #e6f4ea;
+      color: #1e8e3e;
+      border: 1px solid #ceead6;
+    }
+    
+    .proxy-item .test-btn:hover {
+      background: #ceead6;
+      border-color: #1e8e3e;
+    }
+    
+    .proxy-item .edit-btn {
+      background: #e8f0fe;
+      color: #1a73e8;
+      border: 1px solid #d2e3fc;
+    }
+    
+    .proxy-item .edit-btn:hover {
+      background: #d2e3fc;
+      border-color: #1a73e8;
+    }
+    
+    .proxy-item .delete-btn {
+      background: #fce8e6;
+      color: #d93025;
+      border: 1px solid #fad2cf;
+    }
+    
+    .proxy-item .delete-btn:hover {
+      background: #fad2cf;
+      border-color: #d93025;
     }
 
     .profile-info {
@@ -80,14 +120,75 @@
       font-size: 14px;
     }
 
+    .header-actions {
+      display: flex;
+      gap: 8px;
+    }
+
     .btn-primary {
       background: #1a73e8;
       color: white;
+      border: 1px solid #1557b0;
+      font-weight: 500;
+      transition: all 0.2s;
+    }
+
+    .btn-primary:hover {
+      background: #1557b0;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
     }
 
     .btn-secondary {
       background: #f8f9fa;
       border: 1px solid #ddd;
+      color: #3c4043;
+      transition: all 0.2s;
+    }
+
+    .btn-secondary:hover {
+      background: #e8eaed;
+      border-color: #dadce0;
+    }
+
+    .btn-warning {
+      background: #fef7e0;
+      color: #ea8600;
+      border: 1px solid #feefc3;
+      transition: all 0.2s;
+    }
+
+    .btn-warning:hover {
+      background: #feefc3;
+      border-color: #fbbc04;
+    }
+
+    .proxy-item {
+      background: white;
+      border: 1px solid #e8eaed;
+      margin: 4px 0;
+      border-radius: 8px;
+      transition: all 0.2s;
+    }
+
+    .proxy-item:hover {
+      border-color: #dadce0;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+
+    .proxy-item.active {
+      background: #e8f0fe;
+      border-color: #1a73e8;
+    }
+
+    .proxy-list {
+      background: #f8f9fa;
+      padding: 8px;
+      border-radius: 8px;
+    }
+
+    .tag {
+      font-weight: 500;
+      letter-spacing: 0.2px;
     }
 
     .form-group {
