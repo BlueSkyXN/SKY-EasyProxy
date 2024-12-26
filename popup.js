@@ -2,6 +2,7 @@ class SKYProxy {
     constructor() {
       this.profiles = [];
       this.activeProfile = null;
+      this.editingIndex = null;  // 添加编辑索引tracking
       this.initUI();
       this.initListeners();
       this.loadProfiles();
@@ -28,7 +29,7 @@ class SKYProxy {
   
         <div id="profileModal" class="modal">
           <div class="modal-content">
-            <h3>Add/Edit Proxy Profile</h3>
+            <h3 id="modalTitle">Add Proxy Profile</h3>
             <div class="form-group">
               <input type="text" id="profileName" placeholder="Profile Name">
             </div>
@@ -65,6 +66,13 @@ class SKYProxy {
       document.getElementById('saveProfileBtn').addEventListener('click', () => this.saveProfile());
       document.getElementById('cancelProfileBtn').addEventListener('click', () => this.hideProfileModal());
       
+      // 添加ESC键关闭modal的支持
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+          this.hideProfileModal();
+        }
+      });
+      
       const globalSwitch = document.getElementById('globalProxySwitch');
       globalSwitch.addEventListener('change', async (e) => {
         if (e.target.checked) {
@@ -87,6 +95,11 @@ class SKYProxy {
       const statusBar = document.getElementById('statusBar');
       statusBar.textContent = message;
       statusBar.className = `status-bar show ${isError ? 'error' : 'success'}`;
+      
+      // 3秒后自动隐藏状态栏
+      setTimeout(() => {
+        statusBar.className = 'status-bar';
+      }, 3000);
     }
   
     async loadProfiles() {
@@ -155,11 +168,15 @@ class SKYProxy {
   
     showProfileModal(profile = null) {
       const modal = document.getElementById('profileModal');
+      const modalTitle = document.getElementById('modalTitle');
       const nameInput = document.getElementById('profileName');
       const typeSelect = document.getElementById('proxyType');
       const hostInput = document.getElementById('proxyHost');
       const portInput = document.getElementById('proxyPort');
       const bypassInput = document.getElementById('bypassList');
+  
+      // 更新modal标题
+      modalTitle.textContent = profile ? 'Edit Proxy Profile' : 'Add Proxy Profile';
   
       if (profile) {
         nameInput.value = profile.name || '';
@@ -180,6 +197,7 @@ class SKYProxy {
   
     hideProfileModal() {
       document.getElementById('profileModal').style.display = 'none';
+      this.editingIndex = null;  // 关闭modal时重置编辑索引
     }
   
     async saveProfile() {
@@ -197,6 +215,13 @@ class SKYProxy {
         return;
       }
   
+      // 验证端口范围
+      const portNum = parseInt(port, 10);
+      if (portNum < 1 || portNum > 65535) {
+        this.showStatus('Port must be between 1 and 65535', true);
+        return;
+      }
+  
       const profile = {
         name: name || host,
         config: {
@@ -205,14 +230,21 @@ class SKYProxy {
             singleProxy: {
               scheme: type,
               host: host,
-              port: parseInt(port, 10)
+              port: portNum
             },
             bypassList
           }
         }
       };
   
-      this.profiles.push(profile);
+      // 处理编辑模式
+      if (this.editingIndex !== null) {
+        this.profiles[this.editingIndex] = profile;
+        this.editingIndex = null;  // 重置编辑索引
+      } else {
+        this.profiles.push(profile);
+      }
+  
       await chrome.storage.local.set({ proxyProfiles: this.profiles });
       this.hideProfileModal();
       this.renderProxyList();
@@ -225,19 +257,18 @@ class SKYProxy {
     }
   
     async deleteProfile(index) {
-      if (confirm('Are you sure you want to delete this profile?')) {
-        if (this.activeProfile === index) {
-          await this.disableProxy();
-        } else if (this.activeProfile > index) {
-          this.activeProfile--;
-        }
-        
-        this.profiles.splice(index, 1);
-        await chrome.storage.local.set({ proxyProfiles: this.profiles });
-        
-        this.renderProxyList();
-        this.showStatus('Profile deleted');
+      // 直接删除配置，无需确认
+      if (this.activeProfile === index) {
+        await this.disableProxy();
+      } else if (this.activeProfile > index) {
+        this.activeProfile--;
       }
+      
+      this.profiles.splice(index, 1);
+      await chrome.storage.local.set({ proxyProfiles: this.profiles });
+      
+      this.renderProxyList();
+      this.showStatus('Profile deleted');
     }
   
     async activateProfile(index) {
@@ -330,9 +361,9 @@ class SKYProxy {
         this.showStatus('✗ Failed to disable proxy', true);
       }
     }
-  }
+}
   
-  // Initialize the proxy manager when the popup loads
-  document.addEventListener('DOMContentLoaded', () => {
-    new SKYProxy();
-  });
+// Initialize the proxy manager when the popup loads
+document.addEventListener('DOMContentLoaded', () => {
+  new SKYProxy();
+});

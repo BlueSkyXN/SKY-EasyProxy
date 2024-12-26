@@ -1,7 +1,7 @@
 {
     "manifest_version": 3,
     "name": "SKY-Proxy",
-    "version": "0.0.4",
+    "version": "0.0.5",
     "description": "Advanced Proxy Manager with Multi-Profile Support",
     "action": {
       "default_popup": "popup.html"
