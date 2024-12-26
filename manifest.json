@@ -1,8 +1,8 @@
 {
     "manifest_version": 3,
-    "name": "Simple Proxy Manager",
+    "name": "SKY-Proxy",
     "version": "1.0",
-    "description": "A simple proxy manager extension",
+    "description": "Advanced Proxy Manager with Multi-Profile Support",
     "action": {
       "default_popup": "popup.html"
     },
