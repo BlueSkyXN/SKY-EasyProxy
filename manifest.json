@@ -1,0 +1,19 @@
+{
+    "manifest_version": 3,
+    "name": "Simple Proxy Manager",
+    "version": "1.0",
+    "description": "A simple proxy manager extension",
+    "action": {
+      "default_popup": "popup.html"
+    },
+    "permissions": [
+      "proxy",
+      "storage"
+    ],
+    "host_permissions": [
+      "<all_urls>"
+    ],
+    "background": {
+      "service_worker": "background.js"
+    }
+  }
