@@ -1,10 +1,10 @@
 {
     "manifest_version": 3,
     "name": "SKY-Proxy",
-    "version": "0.0.5",
+    "version": "0.1.0",
     "description": "Advanced Proxy Manager with Multi-Profile Support",
     "action": {
-      "default_popup": "popup.html"
+      "default_popup": "index.html"
     },
     "permissions": [
       "proxy",
