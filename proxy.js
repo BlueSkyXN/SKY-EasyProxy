@@ -1,26 +1,18 @@
+import BypassRules from './bypass-rules.js';
+
 class SKYProxy {
   constructor() {
     this.profiles = [];
     this.activeProfile = null;
-    this.editingIndex = null;  // 添加编辑索引tracking
-    this.defaultBypassRules = {
-      basic: [
-        'localhost', '127.0.0.1', '[::1]', '*.localhost'
-      ],
-      development: [
-        'localhost', '127.0.0.1', '[::1]',
-        '*.localhost', '*.local', '*.test',
-        '192.168.0.0/16'
-      ],
-      china: [
-        'localhost', '127.0.0.1', '[::1]',
-        '*.cn', '*.com.cn', '*.edu.cn', '*.gov.cn',
-        '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'
-      ]
+    this.editingIndex = null;
+    this.proxyState = {
+      isEnabled: false,
+      lastError: null
     };
     this.initUI();
     this.initListeners();
     this.loadProfiles();
+    this.syncStateWithBackground();
   }
 
   async initUI() {
@@ -65,6 +57,7 @@ class SKYProxy {
           <div class="form-group">
             <label>Bypass Rules:</label>
             <div class="bypass-templates">
+              <button class="template-btn" data-template="minimal">Minimal</button>
               <button class="template-btn" data-template="basic">Basic</button>
               <button class="template-btn" data-template="development">Development</button>
               <button class="template-btn" data-template="china">China</button>
@@ -124,9 +117,9 @@ class SKYProxy {
     document.querySelector('.bypass-templates').addEventListener('click', (e) => {
       if (e.target.classList.contains('template-btn')) {
         const templateName = e.target.dataset.template;
-        const rules = this.defaultBypassRules[templateName];
+        const rules = BypassRules.getTemplate(templateName);
         if (rules) {
-          document.getElementById('bypassList').value = rules.join(', ');
+          document.getElementById('bypassList').value = BypassRules.formatRules(rules);
           this.validateBypassRules();
         }
       }
@@ -142,70 +135,26 @@ class SKYProxy {
   validateBypassRules() {
     const input = document.getElementById('bypassList').value;
     const validationDiv = document.getElementById('bypassValidation');
-    const rules = input.split(',').map(r => r.trim()).filter(r => r);
     
-    const validRules = [];
-    const invalidRules = [];
-
-    rules.forEach(rule => {
-      if (this.isValidRule(rule)) {
-        validRules.push(this.getRuleType(rule));
-      } else {
-        invalidRules.push(rule);
-      }
-    });
-
+    // 使用BypassRules类解析规则
+    const { valid, invalid } = BypassRules.parseRules(input);
+    
     // 更新验证UI
     validationDiv.innerHTML = '';
 
-    if (validRules.length > 0) {
-      const validHtml = validRules.map(({rule, type}) => `
+    if (valid.length > 0) {
+      const validHtml = valid.map(({rule, type}) => `
         <span class="rule-tag ${type}">${rule}</span>
       `).join('');
       validationDiv.innerHTML += `<div class="valid-rules">${validHtml}</div>`;
     }
 
-    if (invalidRules.length > 0) {
-      const invalidHtml = invalidRules.map(rule => `
-        <div class="invalid-rule">❌ ${rule}</div>
+    if (invalid.length > 0) {
+      const invalidHtml = invalid.map(({rule, error}) => `
+        <div class="invalid-rule">❌ ${rule} (${error})</div>
       `).join('');
       validationDiv.innerHTML += `<div class="error-list">${invalidHtml}</div>`;
     }
-  }
-
-  isValidRule(rule) {
-    // IPv4
-    if (/^(\d{1,3}\.){3}\d{1,3}$/.test(rule)) {
-      return rule.split('.').every(num => {
-        const n = parseInt(num);
-        return n >= 0 && n <= 255;
-      });
-    }
-
-    // IPv6
-    if (rule.includes(':') || /^\[.*\]$/.test(rule)) {
-      const ipv6 = rule.replace(/^\[|\]$/g, '');
-      const parts = ipv6.split(':');
-      return parts.length >= 2 && parts.length <= 8 &&
-             parts.every(part => !part || /^[0-9a-fA-F]{1,4}$/.test(part));
-    }
-
-    // CIDR
-    if (rule.includes('/')) {
-      const [ip, prefix] = rule.split('/');
-      const prefixNum = parseInt(prefix);
-      return this.isValidRule(ip) && prefixNum >= 0 && prefixNum <= 32;
-    }
-
-    // Domain (包括通配符)
-    return /^(\*\.)?[a-zA-Z0-9][-a-zA-Z0-9]*(\.[a-zA-Z0-9][-a-zA-Z0-9]*)*$/.test(rule);
-  }
-
-  getRuleType(rule) {
-    if (rule.includes('/')) return { rule, type: 'cidr' };
-    if (rule.includes(':') || /^\[.*\]$/.test(rule)) return { rule, type: 'ipv6' };
-    if (/^(\d{1,3}\.){3}\d{1,3}$/.test(rule)) return { rule, type: 'ipv4' };
-    return { rule, type: 'domain' };
   }
 
   showStatus(message, isError = false) {
@@ -217,23 +166,61 @@ class SKYProxy {
     setTimeout(() => {
       statusBar.className = 'status-bar';
     }, 3000);
+    
+    // 对于错误状态，同时记录到控制台
+    if (isError) {
+      console.error(`[SKY-Proxy] ${message}`);
+    }
+  }
+
+  async syncStateWithBackground() {
+    try {
+      // 获取后台保存的代理状态
+      const response = await chrome.runtime.sendMessage({ 
+        type: 'GET_PROXY_STATE'
+      });
+      
+      if (response && response.activeProfile !== undefined) {
+        this.activeProfile = response.activeProfile;
+        document.getElementById('globalProxySwitch').checked = this.activeProfile !== null;
+        this.renderProxyList();
+      }
+    } catch (error) {
+      console.warn('Failed to sync state with background:', error);
+    }
   }
 
   async loadProfiles() {
-    const { proxyProfiles = [] } = await chrome.storage.local.get('proxyProfiles');
-    this.profiles = proxyProfiles;
-    const { activeProfileId } = await chrome.storage.local.get('activeProfileId');
-    this.activeProfile = activeProfileId;
+    try {
+      const { proxyProfiles = [] } = await chrome.storage.local.get('proxyProfiles');
+      this.profiles = proxyProfiles;
+      const { activeProfileId } = await chrome.storage.local.get('activeProfileId');
+      this.activeProfile = activeProfileId;
 
-    const globalSwitch = document.getElementById('globalProxySwitch');
-    globalSwitch.checked = this.activeProfile !== null;
+      const globalSwitch = document.getElementById('globalProxySwitch');
+      globalSwitch.checked = this.activeProfile !== null;
 
-    this.renderProxyList();
+      this.renderProxyList();
+    } catch (error) {
+      console.error('Failed to load profiles:', error);
+      this.showStatus('Failed to load profiles', true);
+    }
   }
 
   renderProxyList() {
     const proxyList = document.getElementById('proxyList');
     proxyList.innerHTML = '';
+
+    if (this.profiles.length === 0) {
+      const emptyMessage = document.createElement('div');
+      emptyMessage.className = 'empty-message';
+      emptyMessage.textContent = 'No proxy profiles yet. Click "Add Profile" to create one.';
+      emptyMessage.style.textAlign = 'center';
+      emptyMessage.style.padding = '20px';
+      emptyMessage.style.color = '#666';
+      proxyList.appendChild(emptyMessage);
+      return;
+    }
 
     this.profiles.forEach((profile, index) => {
       const item = document.createElement('div');
@@ -306,7 +293,7 @@ class SKYProxy {
       typeSelect.value = 'http';
       hostInput.value = '';
       portInput.value = '';
-      bypassInput.value = this.defaultBypassRules.basic.join(', ');
+      bypassInput.value = BypassRules.formatRules(BypassRules.getTemplate('basic'));
     }
 
     this.validateBypassRules();
@@ -323,10 +310,11 @@ class SKYProxy {
     const type = document.getElementById('proxyType').value;
     const host = document.getElementById('proxyHost').value;
     const port = document.getElementById('proxyPort').value;
-    const bypassList = document.getElementById('bypassList').value
-      .split(',')
-      .map(item => item.trim())
-      .filter(item => item);
+    const bypassText = document.getElementById('bypassList').value;
+    
+    // 使用BypassRules类解析规则
+    const { valid, invalid } = BypassRules.parseRules(bypassText);
+    const bypassList = valid.map(item => item.rule);
 
     if (!host || !port) {
       this.showStatus('Please fill in host and port', true);
@@ -341,9 +329,9 @@ class SKYProxy {
     }
 
     // 验证绕过规则
-    const invalidRules = bypassList.filter(rule => !this.isValidRule(rule));
-    if (invalidRules.length > 0) {
-      this.showStatus(`Invalid bypass rules: ${invalidRules.join(', ')}`, true);
+    if (invalid.length > 0) {
+      const invalidRulesList = invalid.map(item => item.rule).join(', ');
+      this.showStatus(`Invalid bypass rules: ${invalidRulesList}`, true);
       return;
     }
 
@@ -362,26 +350,39 @@ class SKYProxy {
       }
     };
 
-    // 处理编辑模式
-    if (this.editingIndex !== null) {
-      this.profiles[this.editingIndex] = profile;
-      this.editingIndex = null;  // 重置编辑索引
+    try {
+      // 处理编辑模式
+      if (this.editingIndex !== null) {
+        this.profiles[this.editingIndex] = profile;
+        this.editingIndex = null;  // 重置编辑索引
       } else {
         this.profiles.push(profile);
       }
-  
+    
       await chrome.storage.local.set({ proxyProfiles: this.profiles });
+      
+      // 通知后台配置已更新
+      await chrome.runtime.sendMessage({ 
+        type: 'PROFILES_UPDATED', 
+        profiles: this.profiles 
+      });
+      
       this.hideProfileModal();
       this.renderProxyList();
       this.showStatus('Profile saved successfully');
+    } catch (error) {
+      console.error('Failed to save profile:', error);
+      this.showStatus('Failed to save profile', true);
     }
-  
-    async editProfile(index) {
-      this.editingIndex = index;
-      this.showProfileModal(this.profiles[index]);
-    }
-  
-    async deleteProfile(index) {
+  }
+
+  async editProfile(index) {
+    this.editingIndex = index;
+    this.showProfileModal(this.profiles[index]);
+  }
+
+  async deleteProfile(index) {
+    try {
       // 直接删除配置，无需确认
       if (this.activeProfile === index) {
         await this.disableProxy();
@@ -392,100 +393,128 @@ class SKYProxy {
       this.profiles.splice(index, 1);
       await chrome.storage.local.set({ proxyProfiles: this.profiles });
       
+      // 通知后台配置已更新
+      await chrome.runtime.sendMessage({ 
+        type: 'PROFILES_UPDATED', 
+        profiles: this.profiles 
+      });
+      
       this.renderProxyList();
       this.showStatus('Profile deleted');
+    } catch (error) {
+      console.error('Failed to delete profile:', error);
+      this.showStatus('Failed to delete profile', true);
     }
-  
-    async activateProfile(index) {
-      const profile = this.profiles[index];
-      try {
-        const response = await chrome.runtime.sendMessage({ 
-          type: 'SET_PROXY', 
-          config: profile.config 
-        });
-        
-        if (response.success) {
-          this.activeProfile = index;
-          await chrome.storage.local.set({ activeProfileId: index });
-          document.getElementById('globalProxySwitch').checked = true;
-          this.renderProxyList();
-          this.showStatus(`✓ Activated: ${profile.name}`);
-        } else {
-          this.showStatus('✗ Failed to activate profile', true);
-        }
-      } catch (error) {
-        console.error('Activation error:', error);
-        this.showStatus('✗ Failed to activate profile', true);
-      }
-    }
-  
-    async testProfile(index) {
-      const profile = this.profiles[index];
-      this.showStatus('Testing connection...');
+  }
+
+  async activateProfile(index) {
+    const profile = this.profiles[index];
+    try {
+      this.showStatus('Activating proxy...');
+      const response = await chrome.runtime.sendMessage({ 
+        type: 'SET_PROXY', 
+        config: profile.config 
+      });
       
-      try {
-        // 保存当前配置
-        const currentConfig = await chrome.proxy.settings.get({});
-        
-        // 临时设置要测试的代理
+      if (response.success) {
+        this.activeProfile = index;
+        await chrome.storage.local.set({ activeProfileId: index });
+        document.getElementById('globalProxySwitch').checked = true;
+        this.renderProxyList();
+        this.showStatus(`✓ Activated: ${profile.name}`);
+      } else {
+        this.showStatus(`✗ Failed to activate profile: ${response.error || 'Unknown error'}`, true);
+      }
+    } catch (error) {
+      console.error('Activation error:', error);
+      this.showStatus('✗ Failed to activate profile', true);
+    }
+  }
+
+  async testProfile(index) {
+    const profile = this.profiles[index];
+    this.showStatus('Testing connection...');
+    
+    let originalConfig = null;
+    let originalProfileIndex = this.activeProfile;
+    
+    try {
+      // 保存当前配置
+      originalConfig = await chrome.proxy.settings.get({});
+      
+      // 临时设置要测试的代理
+      const setupResponse = await chrome.runtime.sendMessage({ 
+        type: 'SET_PROXY', 
+        config: profile.config 
+      });
+      
+      if (!setupResponse.success) {
+        throw new Error('Failed to set test proxy: ' + (setupResponse.error || 'Unknown error'));
+      }
+      
+      // 测试连接
+      const testResponse = await chrome.runtime.sendMessage({
+        type: 'TEST_PROXY'
+      });
+      
+      // 恢复原始配置
+      await this.restoreOriginalConfig(originalConfig, originalProfileIndex);
+      
+      if (testResponse.success) {
+        this.showStatus(`✓ Test successful: ${testResponse.ip}`);
+      } else {
+        this.showStatus(`✗ Test failed: ${testResponse.error || 'Connection error'}`, true);
+      }
+    } catch (error) {
+      console.error('Test error:', error);
+      this.showStatus(`✗ Test failed: ${error.message}`, true);
+      
+      // 确保恢复原始配置
+      await this.restoreOriginalConfig(originalConfig, originalProfileIndex);
+    }
+  }
+  
+  async restoreOriginalConfig(originalConfig, originalProfileIndex) {
+    try {
+      if (originalProfileIndex !== null) {
+        const activeProfile = this.profiles[originalProfileIndex];
         await chrome.runtime.sendMessage({ 
           type: 'SET_PROXY', 
-          config: profile.config 
+          config: activeProfile.config 
         });
-        
-        // 测试连接
-        const response = await chrome.runtime.sendMessage({
-          type: 'TEST_PROXY'
+      } else {
+        await chrome.runtime.sendMessage({ 
+          type: 'SET_PROXY', 
+          config: { mode: "direct" } 
         });
-        
-        // 恢复原始配置
-        if (this.activeProfile !== null) {
-          const activeProfile = this.profiles[this.activeProfile];
-          await chrome.runtime.sendMessage({ 
-            type: 'SET_PROXY', 
-            config: activeProfile.config 
-          });
-        } else {
-          await chrome.runtime.sendMessage({ 
-            type: 'SET_PROXY', 
-            config: { mode: "direct" } 
-          });
-        }
-        
-        if (response.success) {
-          this.showStatus(`✓ Test successful: ${response.ip}`);
-        } else {
-          this.showStatus('✗ Test failed', true);
-        }
-      } catch (error) {
-        console.error('Test error:', error);
-        this.showStatus('✗ Test failed', true);
-        
-        // 确保恢复原始配置
-        if (this.activeProfile !== null) {
-          const activeProfile = this.profiles[this.activeProfile];
-          await chrome.runtime.sendMessage({ 
-            type: 'SET_PROXY', 
-            config: activeProfile.config 
-          });
-        }
       }
+      return true;
+    } catch (error) {
+      console.error('Failed to restore original config:', error);
+      this.showStatus('⚠️ Failed to restore original proxy configuration. Please check your settings.', true);
+      return false;
     }
-  
-    async disableProxy() {
-      const config = { mode: "direct" };
-      try {
-        await chrome.runtime.sendMessage({ type: 'SET_PROXY', config });
+  }
+
+  async disableProxy() {
+    const config = { mode: "direct" };
+    try {
+      const response = await chrome.runtime.sendMessage({ type: 'SET_PROXY', config });
+      
+      if (response.success) {
         this.activeProfile = null;
         await chrome.storage.local.set({ activeProfileId: null });
         document.getElementById('globalProxySwitch').checked = false;
         this.renderProxyList();
         this.showStatus('✓ Proxy disabled');
-      } catch (error) {
-        console.error('Disable error:', error);
-        this.showStatus('✗ Failed to disable proxy', true);
+      } else {
+        this.showStatus(`✗ Failed to disable proxy: ${response.error || 'Unknown error'}`, true);
       }
+    } catch (error) {
+      console.error('Disable error:', error);
+      this.showStatus('✗ Failed to disable proxy', true);
     }
+  }
 }
   
 // Initialize the proxy manager when the popup loads
