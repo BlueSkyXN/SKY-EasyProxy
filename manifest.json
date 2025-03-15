@@ -1,20 +1,19 @@
 {
-  "manifest_version": 3,
-  "name": "SKY-Proxy",
-  "version": "0.1.2",
-  "description": "Advanced Proxy Manager with Multi-Profile Support",
-  "action": {
-    "default_popup": "index.html"
-  },
-  "permissions": [
-    "proxy",
-    "storage"
-  ],
-  "host_permissions": [
-    "<all_urls>"
-  ],
-  "background": {
-    "service_worker": "background.js",
-    "type": "module"
+    "manifest_version": 3,
+    "name": "SKY-Proxy",
+    "version": "0.1.1",
+    "description": "Advanced Proxy Manager with Multi-Profile Support",
+    "action": {
+      "default_popup": "index.html"
+    },
+    "permissions": [
+      "proxy",
+      "storage"
+    ],
+    "host_permissions": [
+      "<all_urls>"
+    ],
+    "background": {
+      "service_worker": "background.js"
+    }
   }
-}
