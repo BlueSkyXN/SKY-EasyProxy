@@ -23,6 +23,83 @@ class SKYProxy {
     this.loadProfiles();
   }
 
+  // HTML转义函数防止XSS
+  escapeHtml(unsafe) {
+    if (typeof unsafe !== 'string') return '';
+    return unsafe
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+  }
+
+  // 输入验证函数
+  validateHost(host) {
+    if (typeof host !== 'string') return '';
+    // 移除危险字符，只保留合法的主机名字符
+    const sanitized = host.replace(/[^a-zA-Z0-9.-]/g, '');
+    // 验证基本格式（域名或IP）
+    if (!/^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*$/.test(sanitized)) {
+      return '';
+    }
+    return sanitized;
+  }
+
+  validatePort(port) {
+    // 转换为数字并验证范围
+    const portNum = parseInt(port, 10);
+    if (isNaN(portNum) || portNum < 1 || portNum > 65535) {
+      return '';
+    }
+    return portNum.toString();
+  }
+
+  validateScheme(scheme) {
+    const validSchemes = ['http', 'https', 'socks4', 'socks5'];
+    return validSchemes.includes(scheme) ? scheme : 'http';
+  }
+
+  // 验证和清理profile数据
+  sanitizeProfile(profile) {
+    if (!profile || typeof profile !== 'object') return null;
+    
+    try {
+      const sanitized = {
+        name: this.escapeHtml(profile.name || ''),
+        config: {
+          mode: "fixed_servers",
+          rules: {
+            singleProxy: {
+              scheme: this.validateScheme(profile.config?.rules?.singleProxy?.scheme),
+              host: this.validateHost(profile.config?.rules?.singleProxy?.host),
+              port: parseInt(this.validatePort(profile.config?.rules?.singleProxy?.port), 10)
+            },
+            bypassList: Array.isArray(profile.config?.rules?.bypassList) 
+              ? profile.config.rules.bypassList.filter(rule => this.isValidRule(rule))
+              : []
+          }
+        }
+      };
+
+      // 验证必要字段
+      if (!sanitized.config.rules.singleProxy.host || !sanitized.config.rules.singleProxy.port) {
+        return null;
+      }
+
+      return sanitized;
+    } catch (error) {
+      console.error('Error sanitizing profile:', error);
+      return null;
+    }
+  }
+
+  // 安全设置activeProfile并同步到storage
+  async setActiveProfile(index) {
+    this.activeProfile = index;
+    await chrome.storage.local.set({ activeProfileId: index });
+  }
+
   async initUI() {
     const container = document.createElement('div');
     container.className = 'container';
@@ -160,44 +237,56 @@ class SKYProxy {
 
     if (validRules.length > 0) {
       const validHtml = validRules.map(({rule, type}) => `
-        <span class="rule-tag ${type}">${rule}</span>
+        <span class="rule-tag ${type}">${this.escapeHtml(rule)}</span>
       `).join('');
       validationDiv.innerHTML += `<div class="valid-rules">${validHtml}</div>`;
     }
 
     if (invalidRules.length > 0) {
       const invalidHtml = invalidRules.map(rule => `
-        <div class="invalid-rule">❌ ${rule}</div>
+        <div class="invalid-rule">❌ ${this.escapeHtml(rule)}</div>
       `).join('');
       validationDiv.innerHTML += `<div class="error-list">${invalidHtml}</div>`;
     }
   }
 
   isValidRule(rule) {
-    // IPv4
-    if (/^(\d{1,3}\.){3}\d{1,3}$/.test(rule)) {
-      return rule.split('.').every(num => {
-        const n = parseInt(num);
-        return n >= 0 && n <= 255;
-      });
-    }
-
-    // IPv6
-    if (rule.includes(':') || /^\[.*\]$/.test(rule)) {
-      const ipv6 = rule.replace(/^\[|\]$/g, '');
-      const parts = ipv6.split(':');
-      return parts.length >= 2 && parts.length <= 8 &&
-             parts.every(part => !part || /^[0-9a-fA-F]{1,4}$/.test(part));
-    }
-
     // CIDR
     if (rule.includes('/')) {
       const [ip, prefix] = rule.split('/');
       const prefixNum = parseInt(prefix);
-      return this.isValidRule(ip) && prefixNum >= 0 && prefixNum <= 32;
+      return this.isValidIP(ip) && prefixNum >= 0 && prefixNum <= (this.isIPv6(ip) ? 128 : 32);
     }
 
-    // Domain (包括通配符)
+    // 其他规则类型
+    return this.isValidIP(rule) || this.isValidDomain(rule);
+  }
+
+  isValidIP(ip) {
+    return this.isValidIPv4(ip) || this.isValidIPv6(ip);
+  }
+
+  isValidIPv4(rule) {
+    if (!/^(\d{1,3}\.){3}\d{1,3}$/.test(rule)) return false;
+    return rule.split('.').every(num => {
+      const n = parseInt(num);
+      return n >= 0 && n <= 255;
+    });
+  }
+
+  isValidIPv6(rule) {
+    if (!rule.includes(':') && !/^\[.*\]$/.test(rule)) return false;
+    const ipv6 = rule.replace(/^\[|\]$/g, '');
+    const parts = ipv6.split(':');
+    return parts.length >= 2 && parts.length <= 8 &&
+           parts.every(part => !part || /^[0-9a-fA-F]{1,4}$/.test(part));
+  }
+
+  isIPv6(ip) {
+    return ip.includes(':') || /^\[.*\]$/.test(ip);
+  }
+
+  isValidDomain(rule) {
     return /^(\*\.)?[a-zA-Z0-9][-a-zA-Z0-9]*(\.[a-zA-Z0-9][-a-zA-Z0-9]*)*$/.test(rule);
   }
 
@@ -221,9 +310,27 @@ class SKYProxy {
 
   async loadProfiles() {
     const { proxyProfiles = [] } = await chrome.storage.local.get('proxyProfiles');
-    this.profiles = proxyProfiles;
+    
+    // 验证和清理所有加载的配置
+    this.profiles = proxyProfiles
+      .map(profile => this.sanitizeProfile(profile))
+      .filter(profile => profile !== null);
+    
+    // 如果有配置被清理掉，保存清理后的配置
+    if (this.profiles.length !== proxyProfiles.length) {
+      console.warn(`Removed ${proxyProfiles.length - this.profiles.length} corrupted profiles`);
+      await chrome.storage.local.set({ proxyProfiles: this.profiles });
+    }
+    
     const { activeProfileId } = await chrome.storage.local.get('activeProfileId');
-    this.activeProfile = activeProfileId;
+    
+    // 验证activeProfileId是否有效
+    if (activeProfileId !== null && (activeProfileId < 0 || activeProfileId >= this.profiles.length)) {
+      console.warn('Invalid activeProfileId detected, resetting to null');
+      await this.setActiveProfile(null);
+    } else {
+      this.activeProfile = activeProfileId;
+    }
 
     const globalSwitch = document.getElementById('globalProxySwitch');
     globalSwitch.checked = this.activeProfile !== null;
@@ -241,9 +348,9 @@ class SKYProxy {
       
       item.innerHTML = `
         <div class="profile-info">
-          <span>${profile.name || profile.config.rules.singleProxy.host}</span>
-          <span class="tag tag-${profile.config.rules.singleProxy.scheme}">
-            ${profile.config.rules.singleProxy.scheme.toUpperCase()}
+          <span>${this.escapeHtml(profile.name || profile.config.rules.singleProxy.host)}</span>
+          <span class="tag tag-${this.escapeHtml(profile.config.rules.singleProxy.scheme)}">
+            ${this.escapeHtml(profile.config.rules.singleProxy.scheme.toUpperCase())}
           </span>
         </div>
         <div class="actions">
@@ -296,11 +403,25 @@ class SKYProxy {
     modalTitle.textContent = profile ? 'Edit Proxy Profile' : 'Add Proxy Profile';
 
     if (profile) {
-      nameInput.value = profile.name || '';
-      typeSelect.value = profile.config.rules.singleProxy.scheme;
-      hostInput.value = profile.config.rules.singleProxy.host;
-      portInput.value = profile.config.rules.singleProxy.port;
-      bypassInput.value = profile.config.rules.bypassList.join(', ');
+      // 验证和清理profile数据
+      const sanitizedProfile = this.sanitizeProfile(profile);
+      
+      if (sanitizedProfile) {
+        nameInput.value = sanitizedProfile.name;
+        typeSelect.value = sanitizedProfile.config.rules.singleProxy.scheme;
+        hostInput.value = sanitizedProfile.config.rules.singleProxy.host;
+        portInput.value = sanitizedProfile.config.rules.singleProxy.port.toString();
+        bypassInput.value = sanitizedProfile.config.rules.bypassList.join(', ');
+      } else {
+        // 如果profile数据无效，显示错误并使用默认值
+        console.warn('Invalid profile data detected, using defaults');
+        this.showStatus('⚠️ Profile data was corrupted, using default values', true);
+        nameInput.value = 'Corrupted Profile';
+        typeSelect.value = 'http';
+        hostInput.value = '';
+        portInput.value = '';
+        bypassInput.value = this.defaultBypassRules.basic.join(', ');
+      }
     } else {
       nameInput.value = '';
       typeSelect.value = 'http';
@@ -328,34 +449,32 @@ class SKYProxy {
       .map(item => item.trim())
       .filter(item => item);
 
-    if (!host || !port) {
-      this.showStatus('Please fill in host and port', true);
-      return;
-    }
+    // 验证和清理输入
+    const validatedHost = this.validateHost(host);
+    const validatedPort = this.validatePort(port);
+    const validatedScheme = this.validateScheme(type);
 
-    // 验证端口范围
-    const portNum = parseInt(port, 10);
-    if (portNum < 1 || portNum > 65535) {
-      this.showStatus('Port must be between 1 and 65535', true);
+    if (!validatedHost || !validatedPort) {
+      this.showStatus('Please provide valid host and port', true);
       return;
     }
 
     // 验证绕过规则
     const invalidRules = bypassList.filter(rule => !this.isValidRule(rule));
     if (invalidRules.length > 0) {
-      this.showStatus(`Invalid bypass rules: ${invalidRules.join(', ')}`, true);
+      this.showStatus(`Invalid bypass rules: ${invalidRules.map(rule => this.escapeHtml(rule)).join(', ')}`, true);
       return;
     }
 
     const profile = {
-      name: name || host,
+      name: this.escapeHtml(name || validatedHost),
       config: {
         mode: "fixed_servers",
         rules: {
           singleProxy: {
-            scheme: type,
-            host: host,
-            port: portNum
+            scheme: validatedScheme,
+            host: validatedHost,
+            port: parseInt(validatedPort, 10)
           },
           bypassList
         }
@@ -386,10 +505,19 @@ class SKYProxy {
       if (this.activeProfile === index) {
         await this.disableProxy();
       } else if (this.activeProfile > index) {
-        this.activeProfile--;
+        // 关键修复：使用安全方法同步activeProfile变更
+        await this.setActiveProfile(this.activeProfile - 1);
       }
       
       this.profiles.splice(index, 1);
+      
+      // 边缘情况检查：如果删除后activeProfile超出范围，重置为null
+      if (this.activeProfile !== null && this.activeProfile >= this.profiles.length) {
+        console.warn('ActiveProfile index out of range after deletion, resetting to null');
+        await this.setActiveProfile(null);
+        await this.disableProxy();
+      }
+      
       await chrome.storage.local.set({ proxyProfiles: this.profiles });
       
       this.renderProxyList();
@@ -405,11 +533,10 @@ class SKYProxy {
         });
         
         if (response.success) {
-          this.activeProfile = index;
-          await chrome.storage.local.set({ activeProfileId: index });
+          await this.setActiveProfile(index);
           document.getElementById('globalProxySwitch').checked = true;
           this.renderProxyList();
-          this.showStatus(`✓ Activated: ${profile.name}`);
+          this.showStatus(`✓ Activated: ${this.escapeHtml(profile.name)}`);
         } else {
           this.showStatus('✗ Failed to activate profile', true);
         }
@@ -423,9 +550,19 @@ class SKYProxy {
       const profile = this.profiles[index];
       this.showStatus('Testing connection...');
       
+      // 防止并发测试
+      if (this.isTesting) {
+        this.showStatus('✗ Another test is already in progress', true);
+        return;
+      }
+      
+      this.isTesting = true;
+      let originalConfig = null;
+      
       try {
-        // 保存当前配置
-        const currentConfig = await chrome.proxy.settings.get({});
+        // 保存当前实际代理配置
+        const currentProxySettings = await chrome.proxy.settings.get({});
+        originalConfig = currentProxySettings.value;
         
         // 临时设置要测试的代理
         await chrome.runtime.sendMessage({ 
@@ -438,22 +575,11 @@ class SKYProxy {
           type: 'TEST_PROXY'
         });
         
-        // 恢复原始配置
-        if (this.activeProfile !== null) {
-          const activeProfile = this.profiles[this.activeProfile];
-          await chrome.runtime.sendMessage({ 
-            type: 'SET_PROXY', 
-            config: activeProfile.config 
-          });
-        } else {
-          await chrome.runtime.sendMessage({ 
-            type: 'SET_PROXY', 
-            config: { mode: "direct" } 
-          });
-        }
+        // 始终恢复到保存的原始配置
+        await this.restoreOriginalConfig(originalConfig);
         
         if (response.success) {
-          this.showStatus(`✓ Test successful: ${response.ip}`);
+          this.showStatus(`✓ Test successful: ${this.escapeHtml(response.ip)}`);
         } else {
           this.showStatus('✗ Test failed', true);
         }
@@ -461,14 +587,33 @@ class SKYProxy {
         console.error('Test error:', error);
         this.showStatus('✗ Test failed', true);
         
-        // 确保恢复原始配置
-        if (this.activeProfile !== null) {
-          const activeProfile = this.profiles[this.activeProfile];
-          await chrome.runtime.sendMessage({ 
-            type: 'SET_PROXY', 
-            config: activeProfile.config 
-          });
+        // 确保在异常情况下也恢复原始配置
+        if (originalConfig !== null) {
+          try {
+            await this.restoreOriginalConfig(originalConfig);
+          } catch (restoreError) {
+            console.error('Failed to restore original config:', restoreError);
+            this.showStatus('✗ Failed to restore proxy settings', true);
+          }
         }
+      } finally {
+        this.isTesting = false;
+      }
+    }
+
+    async restoreOriginalConfig(originalConfig) {
+      if (!originalConfig) {
+        // 如果原配置为空或无效，设置为直连模式
+        await chrome.runtime.sendMessage({ 
+          type: 'SET_PROXY', 
+          config: { mode: "direct" } 
+        });
+      } else {
+        // 恢复原始配置
+        await chrome.runtime.sendMessage({ 
+          type: 'SET_PROXY', 
+          config: originalConfig 
+        });
       }
     }
   
@@ -476,8 +621,7 @@ class SKYProxy {
       const config = { mode: "direct" };
       try {
         await chrome.runtime.sendMessage({ type: 'SET_PROXY', config });
-        this.activeProfile = null;
-        await chrome.storage.local.set({ activeProfileId: null });
+        await this.setActiveProfile(null);
         document.getElementById('globalProxySwitch').checked = false;
         this.renderProxyList();
         this.showStatus('✓ Proxy disabled');
