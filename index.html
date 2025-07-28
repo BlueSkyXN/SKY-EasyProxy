@@ -234,10 +234,9 @@
       box-shadow: 0 2px 6px rgba(0,0,0,0.2);
     }
 
-    @supports (overflow: overlay) {
-      .modal-content {
-        overflow-y: overlay;
-      }
+    /* 使用现代滚动条样式替代已废弃的overlay */
+    .modal-content {
+      overflow-y: auto;
     }
 
     .form-group {
@@ -301,10 +300,9 @@
       background: #f8f9fa;
     }
 
-    @supports (overflow: overlay) {
-      .bypass-validation {
-        overflow-y: overlay;
-      }
+    /* 使用现代滚动条样式替代已废弃的overlay */
+    .bypass-validation {
+      overflow-y: auto;
     }
 
     .valid-rules {
