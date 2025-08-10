@@ -3,6 +3,7 @@ class SKYProxy {
     this.profiles = [];
     this.activeProfile = null;
     this.editingIndex = null;  // 添加编辑索引tracking
+    this.isTesting = false;  // 初始化测试状态防止并发控制失效
     this.defaultBypassRules = {
       basic: [
         'localhost', '127.0.0.1', '[::1]', '*.localhost'
@@ -37,13 +38,19 @@ class SKYProxy {
   // 输入验证函数
   validateHost(host) {
     if (typeof host !== 'string') return '';
-    // 移除危险字符，只保留合法的主机名字符
-    const sanitized = host.replace(/[^a-zA-Z0-9.-]/g, '');
-    // 验证基本格式（域名或IP）
-    if (!/^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*$/.test(sanitized)) {
-      return '';
+    const trimmed = host.trim();
+
+    // 支持 IPv6（可带[]），返回不带[]的主机值
+    if (trimmed.includes(':') || /^\[.*\]$/.test(trimmed)) {
+      const ipv6 = trimmed.replace(/^\[|\]$/g, '');
+      return this.isValidIPv6(ipv6) ? ipv6 : '';
     }
-    return sanitized;
+
+    // 仅保留合法字符（域名或IPv4）
+    const sanitized = trimmed.replace(/[^a-zA-Z0-9.-]/g, '');
+    if (this.isValidIPv4(sanitized)) return sanitized;
+    // 域名校验
+    return /^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*$/.test(sanitized) ? sanitized : '';
   }
 
   validatePort(port) {
@@ -324,10 +331,11 @@ class SKYProxy {
     
     const { activeProfileId } = await chrome.storage.local.get('activeProfileId');
     
-    // 验证activeProfileId是否有效
-    if (activeProfileId !== null && (activeProfileId < 0 || activeProfileId >= this.profiles.length)) {
-      console.warn('Invalid activeProfileId detected, resetting to null');
+    // 统一处理 undefined/null，并校验范围
+    const isValidIndex = Number.isInteger(activeProfileId) && activeProfileId >= 0 && activeProfileId < this.profiles.length;
+    if (!isValidIndex) {
       await this.setActiveProfile(null);
+      this.activeProfile = null;
     } else {
       this.activeProfile = activeProfileId;
     }
@@ -485,15 +493,15 @@ class SKYProxy {
     if (this.editingIndex !== null) {
       this.profiles[this.editingIndex] = profile;
       this.editingIndex = null;  // 重置编辑索引
-      } else {
-        this.profiles.push(profile);
-      }
-  
-      await chrome.storage.local.set({ proxyProfiles: this.profiles });
-      this.hideProfileModal();
-      this.renderProxyList();
-      this.showStatus('Profile saved successfully');
+    } else {
+      this.profiles.push(profile);
     }
+  
+    await chrome.storage.local.set({ proxyProfiles: this.profiles });
+    this.hideProfileModal();
+    this.renderProxyList();
+    this.showStatus('Profile saved successfully');
+  }
   
     async editProfile(index) {
       this.editingIndex = index;
