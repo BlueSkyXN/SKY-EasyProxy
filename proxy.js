@@ -185,8 +185,7 @@ class SKYProxy {
     const globalSwitch = document.getElementById('globalProxySwitch');
     globalSwitch.addEventListener('change', async (e) => {
       if (e.target.checked) {
-        if (this.activeProfile !== null) {
-          const profile = this.profiles[this.activeProfile];
+        if (this.activeProfile !== null && this.activeProfile < this.profiles.length) {
           await this.activateProfile(this.activeProfile);
         } else if (this.profiles.length > 0) {
           await this.activateProfile(0);
@@ -276,7 +275,9 @@ class SKYProxy {
   isValidIPv4(rule) {
     if (!/^(\d{1,3}\.){3}\d{1,3}$/.test(rule)) return false;
     return rule.split('.').every(num => {
-      const n = parseInt(num);
+      // Reject leading zeros (except for "0" itself) to avoid octal interpretation ambiguity
+      if (num.length > 1 && num[0] === '0') return false;
+      const n = parseInt(num, 10);
       return n >= 0 && n <= 255;
     });
   }
@@ -284,9 +285,20 @@ class SKYProxy {
   isValidIPv6(rule) {
     if (!rule.includes(':') && !/^\[.*\]$/.test(rule)) return false;
     const ipv6 = rule.replace(/^\[|\]$/g, '');
+    
+    // Check for multiple :: compressions (only one allowed)
+    const doubleColonCount = (ipv6.match(/::/g) || []).length;
+    if (doubleColonCount > 1) return false;
+    
     const parts = ipv6.split(':');
-    return parts.length >= 2 && parts.length <= 8 &&
-           parts.every(part => !part || /^[0-9a-fA-F]{1,4}$/.test(part));
+    
+    // If :: is used, we can have fewer than 8 parts
+    // Without ::, we must have exactly 8 parts
+    if (doubleColonCount === 0 && parts.length !== 8) return false;
+    if (doubleColonCount === 1 && parts.length > 8) return false;
+    
+    // Validate each part
+    return parts.every(part => !part || /^[0-9a-fA-F]{1,4}$/.test(part));
   }
 
   isIPv6(ip) {
@@ -294,7 +306,8 @@ class SKYProxy {
   }
 
   isValidDomain(rule) {
-    return /^(\*\.)?[a-zA-Z0-9][-a-zA-Z0-9]*(\.[a-zA-Z0-9][-a-zA-Z0-9]*)*$/.test(rule);
+    // Domain labels must not start or end with a dash (RFC 1035)
+    return /^(\*\.)?[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*$/.test(rule);
   }
 
   getRuleType(rule) {
@@ -533,6 +546,13 @@ class SKYProxy {
     }
   
     async activateProfile(index) {
+      // Validate index bounds
+      if (index < 0 || index >= this.profiles.length) {
+        this.showStatus('✗ Invalid profile', true);
+        document.getElementById('globalProxySwitch').checked = false;
+        return;
+      }
+      
       const profile = this.profiles[index];
       try {
         const response = await chrome.runtime.sendMessage({ 
@@ -547,10 +567,12 @@ class SKYProxy {
           this.showStatus(`✓ Activated: ${this.escapeHtml(profile.name)}`);
         } else {
           this.showStatus('✗ Failed to activate profile', true);
+          document.getElementById('globalProxySwitch').checked = false;
         }
       } catch (error) {
         console.error('Activation error:', error);
         this.showStatus('✗ Failed to activate profile', true);
+        document.getElementById('globalProxySwitch').checked = false;
       }
     }
   
