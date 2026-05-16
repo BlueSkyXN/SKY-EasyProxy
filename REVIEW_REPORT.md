@@ -1,8 +1,8 @@
 # SKY-EasyProxy 代码评审报告
 
-**评审日期**: 2026-01-31  
-**评审范围**: 完整项目代码库  
-**评审人**: GitHub Copilot AI Code Review  
+**评审日期**: 2026-01-31
+**评审范围**: 完整项目代码库
+**评审人**: GitHub Copilot AI Code Review
 
 ---
 
@@ -21,11 +21,11 @@
 ## 一、已修复的严重问题
 
 ### 问题 1: 全局开关处理器中的竞态条件
-**文件**: `proxy.js:186-190`  
-**严重性**: 🔴 高  
+**文件**: `proxy.js:186-190`
+**严重性**: 🔴 高
 **状态**: ✅ 已修复
 
-**问题描述**:  
+**问题描述**:
 当全局开关启用且 `activeProfile !== null` 时，代码访问 `this.profiles[this.activeProfile]` 而不验证索引是否在数组边界内。如果在异步操作期间删除配置文件，这会导致 `activateProfile()` 接收到 undefined 并在访问 `profile.config` 时崩溃。
 
 **修复内容**:
@@ -47,11 +47,11 @@ if (this.activeProfile !== null && this.activeProfile < this.profiles.length) {
 ---
 
 ### 问题 2: activateProfile 函数缺少索引验证
-**文件**: `proxy.js:535-536`  
-**严重性**: 🔴 高  
+**文件**: `proxy.js:535-536`
+**严重性**: 🔴 高
 **状态**: ✅ 已修复
 
-**问题描述**:  
+**问题描述**:
 `activateProfile(index)` 函数在访问 `this.profiles[index]` 之前不验证 `index` 是否在数组边界内。当配置文件为 undefined 时，访问 `profile.config` 会抛出 TypeError，并且错误处理程序不会正确重置 UI 状态。
 
 **修复内容**:
@@ -72,11 +72,11 @@ async activateProfile(index) {
 ---
 
 ### 问题 3: 激活失败时未重置开关状态
-**文件**: `proxy.js:548-554`  
-**严重性**: 🟡 中等  
+**文件**: `proxy.js:548-554`
+**严重性**: 🟡 中等
 **状态**: ✅ 已修复
 
-**问题描述**:  
+**问题描述**:
 当 `activateProfile()` 失败（由于 API 拒绝或异常）时，错误处理程序显示错误消息但不将全局开关重置为未选中状态。这使得 UI 显示代理已启用，而实际上代理是禁用的，误导用户关于代理状态。
 
 **修复内容**:
@@ -100,11 +100,11 @@ async activateProfile(index) {
 ## 二、输入验证改进
 
 ### 改进 1: IPv6 地址验证增强
-**文件**: `proxy.js:284-290`  
-**严重性**: 🟡 中等  
+**文件**: `proxy.js:284-290`
+**严重性**: 🟡 中等
 **状态**: ✅ 已修复
 
-**问题描述**:  
+**问题描述**:
 IPv6 验证正则表达式允许无效的 IPv6 地址，如包含过多连续冒号（例如 `:::::` 或 `2001:db8::1::`）。正则表达式仅检查部分计数和十六进制数字有效性，但不强制执行 IPv6 压缩规则（`::` 只能出现一次）。
 
 **修复内容**:
@@ -112,17 +112,17 @@ IPv6 验证正则表达式允许无效的 IPv6 地址，如包含过多连续冒
 isValidIPv6(rule) {
   if (!rule.includes(':') && !/^\[.*\]$/.test(rule)) return false;
   const ipv6 = rule.replace(/^\[|\]$/g, '');
-  
+
   // 新增：检查多个 :: 压缩（只允许一个）
   const doubleColonCount = (ipv6.match(/::/g) || []).length;
   if (doubleColonCount > 1) return false;
-  
+
   const parts = ipv6.split(':');
-  
+
   // 新增：如果使用 ::，可以少于 8 个部分；否则必须正好 8 个部分
   if (doubleColonCount === 0 && parts.length !== 8) return false;
   if (doubleColonCount === 1 && parts.length > 8) return false;
-  
+
   return parts.every(part => !part || /^[0-9a-fA-F]{1,4}$/.test(part));
 }
 ```
@@ -132,11 +132,11 @@ isValidIPv6(rule) {
 ---
 
 ### 改进 2: 域名验证增强
-**文件**: `proxy.js:296-298`  
-**严重性**: 🟡 中等  
+**文件**: `proxy.js:296-298`
+**严重性**: 🟡 中等
 **状态**: ✅ 已修复
 
-**问题描述**:  
+**问题描述**:
 域名验证正则表达式接受以破折号结尾的域名标签（例如 `example-.com`、`sub-.example.com`），这违反了 RFC 1035 的 DNS 命名约定。根据 RFC 1035，域名标签不能以连字符结尾。
 
 **修复内容**:
@@ -152,11 +152,11 @@ isValidDomain(rule) {
 ---
 
 ### 改进 3: IPv4 地址前导零检查
-**文件**: `proxy.js:276-282`  
-**严重性**: 🟢 低  
+**文件**: `proxy.js:276-282`
+**严重性**: 🟢 低
 **状态**: ✅ 已修复
 
-**问题描述**:  
+**问题描述**:
 IPv4 验证接受带前导零的地址（例如 `192.168.001.001`、`192.168.08.08`）。虽然这些地址使用 `parseInt(num, 10)` 可以正确解析，但许多代理实现和网络工具会拒绝带前导零的 IPv4 地址，因为存在历史上的八进制解释歧义。
 
 **修复内容**:
@@ -438,7 +438,7 @@ SKY-EasyProxy 是一个**设计良好、安全可靠**的 Chrome 代理管理扩
 ## 附录：修复的代码变更清单
 
 ### 提交 1: 关键 Bug 修复
-**文件**: `proxy.js`  
+**文件**: `proxy.js`
 **变更**:
 - 在全局开关处理器中添加边界检查
 - 在 `activateProfile()` 函数中添加索引验证
@@ -447,8 +447,8 @@ SKY-EasyProxy 是一个**设计良好、安全可靠**的 Chrome 代理管理扩
 - 改进域名验证逻辑
 - 添加 IPv4 前导零检查
 
-**代码行数**: 约 30 行修改  
-**受影响函数**: 3 个  
+**代码行数**: 约 30 行修改
+**受影响函数**: 3 个
 **测试状态**: ✅ 已通过 CodeQL 扫描
 
 ---
