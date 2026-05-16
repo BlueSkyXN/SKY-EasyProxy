@@ -70,7 +70,7 @@ class SKYProxy {
   // 验证和清理profile数据
   sanitizeProfile(profile) {
     if (!profile || typeof profile !== 'object') return null;
-    
+
     try {
       const sanitized = {
         name: this.escapeHtml(profile.name || ''),
@@ -82,7 +82,7 @@ class SKYProxy {
               host: this.validateHost(profile.config?.rules?.singleProxy?.host),
               port: parseInt(this.validatePort(profile.config?.rules?.singleProxy?.port), 10)
             },
-            bypassList: Array.isArray(profile.config?.rules?.bypassList) 
+            bypassList: Array.isArray(profile.config?.rules?.bypassList)
               ? profile.config.rules.bypassList.filter(rule => this.isValidRule(rule))
               : []
           }
@@ -123,7 +123,7 @@ class SKYProxy {
       </div>
 
       <div id="proxyList" class="proxy-list"></div>
-      
+
       <div id="statusBar" class="status-bar"></div>
 
       <div id="profileModal" class="modal">
@@ -174,19 +174,18 @@ class SKYProxy {
     document.getElementById('addProfileBtn').addEventListener('click', () => this.showProfileModal());
     document.getElementById('saveProfileBtn').addEventListener('click', () => this.saveProfile());
     document.getElementById('cancelProfileBtn').addEventListener('click', () => this.hideProfileModal());
-    
+
     // 添加ESC键关闭modal的支持
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
         this.hideProfileModal();
       }
     });
-    
+
     const globalSwitch = document.getElementById('globalProxySwitch');
     globalSwitch.addEventListener('change', async (e) => {
       if (e.target.checked) {
-        if (this.activeProfile !== null) {
-          const profile = this.profiles[this.activeProfile];
+        if (this.activeProfile !== null && this.activeProfile < this.profiles.length) {
           await this.activateProfile(this.activeProfile);
         } else if (this.profiles.length > 0) {
           await this.activateProfile(0);
@@ -227,7 +226,7 @@ class SKYProxy {
     const input = document.getElementById('bypassList').value;
     const validationDiv = document.getElementById('bypassValidation');
     const rules = input.split(',').map(r => r.trim()).filter(r => r);
-    
+
     const validRules = [];
     const invalidRules = [];
 
@@ -276,7 +275,9 @@ class SKYProxy {
   isValidIPv4(rule) {
     if (!/^(\d{1,3}\.){3}\d{1,3}$/.test(rule)) return false;
     return rule.split('.').every(num => {
-      const n = parseInt(num);
+      // Reject leading zeros (except for "0" itself) to avoid octal interpretation ambiguity
+      if (num.length > 1 && num[0] === '0') return false;
+      const n = parseInt(num, 10);
       return n >= 0 && n <= 255;
     });
   }
@@ -284,9 +285,20 @@ class SKYProxy {
   isValidIPv6(rule) {
     if (!rule.includes(':') && !/^\[.*\]$/.test(rule)) return false;
     const ipv6 = rule.replace(/^\[|\]$/g, '');
+
+    // Check for multiple :: compressions (only one allowed)
+    const doubleColonCount = (ipv6.match(/::/g) || []).length;
+    if (doubleColonCount > 1) return false;
+
     const parts = ipv6.split(':');
-    return parts.length >= 2 && parts.length <= 8 &&
-           parts.every(part => !part || /^[0-9a-fA-F]{1,4}$/.test(part));
+
+    // If :: is used, we can have fewer than 8 parts
+    // Without ::, we must have exactly 8 parts
+    if (doubleColonCount === 0 && parts.length !== 8) return false;
+    if (doubleColonCount === 1 && parts.length > 8) return false;
+
+    // Validate each part
+    return parts.every(part => !part || /^[0-9a-fA-F]{1,4}$/.test(part));
   }
 
   isIPv6(ip) {
@@ -294,7 +306,8 @@ class SKYProxy {
   }
 
   isValidDomain(rule) {
-    return /^(\*\.)?[a-zA-Z0-9][-a-zA-Z0-9]*(\.[a-zA-Z0-9][-a-zA-Z0-9]*)*$/.test(rule);
+    // Domain labels must not start or end with a dash (RFC 1035)
+    return /^(\*\.)?[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*$/.test(rule);
   }
 
   getRuleType(rule) {
@@ -308,7 +321,7 @@ class SKYProxy {
     const statusBar = document.getElementById('statusBar');
     statusBar.textContent = message;
     statusBar.className = `status-bar show ${isError ? 'error' : 'success'}`;
-    
+
     // 3秒后自动隐藏状态栏
     setTimeout(() => {
       statusBar.className = 'status-bar';
@@ -317,20 +330,20 @@ class SKYProxy {
 
   async loadProfiles() {
     const { proxyProfiles = [] } = await chrome.storage.local.get('proxyProfiles');
-    
+
     // 验证和清理所有加载的配置
     this.profiles = proxyProfiles
       .map(profile => this.sanitizeProfile(profile))
       .filter(profile => profile !== null);
-    
+
     // 如果有配置被清理掉，保存清理后的配置
     if (this.profiles.length !== proxyProfiles.length) {
       console.warn(`Removed ${proxyProfiles.length - this.profiles.length} corrupted profiles`);
       await chrome.storage.local.set({ proxyProfiles: this.profiles });
     }
-    
+
     const { activeProfileId } = await chrome.storage.local.get('activeProfileId');
-    
+
     // 统一处理 undefined/null，并校验范围
     const isValidIndex = Number.isInteger(activeProfileId) && activeProfileId >= 0 && activeProfileId < this.profiles.length;
     if (!isValidIndex) {
@@ -353,7 +366,7 @@ class SKYProxy {
     this.profiles.forEach((profile, index) => {
       const item = document.createElement('div');
       item.className = `proxy-item ${this.activeProfile === index ? 'active' : ''}`;
-      
+
       item.innerHTML = `
         <div class="profile-info">
           <span>${this.escapeHtml(profile.name || profile.config.rules.singleProxy.host)}</span>
@@ -413,7 +426,7 @@ class SKYProxy {
     if (profile) {
       // 验证和清理profile数据
       const sanitizedProfile = this.sanitizeProfile(profile);
-      
+
       if (sanitizedProfile) {
         nameInput.value = sanitizedProfile.name;
         typeSelect.value = sanitizedProfile.config.rules.singleProxy.scheme;
@@ -496,18 +509,18 @@ class SKYProxy {
     } else {
       this.profiles.push(profile);
     }
-  
+
     await chrome.storage.local.set({ proxyProfiles: this.profiles });
     this.hideProfileModal();
     this.renderProxyList();
     this.showStatus('Profile saved successfully');
   }
-  
+
     async editProfile(index) {
       this.editingIndex = index;
       this.showProfileModal(this.profiles[index]);
     }
-  
+
     async deleteProfile(index) {
       // 直接删除配置，无需确认
       if (this.activeProfile === index) {
@@ -516,30 +529,37 @@ class SKYProxy {
         // 关键修复：使用安全方法同步activeProfile变更
         await this.setActiveProfile(this.activeProfile - 1);
       }
-      
+
       this.profiles.splice(index, 1);
-      
+
       // 边缘情况检查：如果删除后activeProfile超出范围，重置为null
       if (this.activeProfile !== null && this.activeProfile >= this.profiles.length) {
         console.warn('ActiveProfile index out of range after deletion, resetting to null');
         await this.setActiveProfile(null);
         await this.disableProxy();
       }
-      
+
       await chrome.storage.local.set({ proxyProfiles: this.profiles });
-      
+
       this.renderProxyList();
       this.showStatus('Profile deleted');
     }
-  
+
     async activateProfile(index) {
+      // Validate index bounds
+      if (index < 0 || index >= this.profiles.length) {
+        this.showStatus('✗ Invalid profile', true);
+        document.getElementById('globalProxySwitch').checked = false;
+        return;
+      }
+
       const profile = this.profiles[index];
       try {
-        const response = await chrome.runtime.sendMessage({ 
-          type: 'SET_PROXY', 
-          config: profile.config 
+        const response = await chrome.runtime.sendMessage({
+          type: 'SET_PROXY',
+          config: profile.config
         });
-        
+
         if (response.success) {
           await this.setActiveProfile(index);
           document.getElementById('globalProxySwitch').checked = true;
@@ -547,45 +567,47 @@ class SKYProxy {
           this.showStatus(`✓ Activated: ${this.escapeHtml(profile.name)}`);
         } else {
           this.showStatus('✗ Failed to activate profile', true);
+          document.getElementById('globalProxySwitch').checked = false;
         }
       } catch (error) {
         console.error('Activation error:', error);
         this.showStatus('✗ Failed to activate profile', true);
+        document.getElementById('globalProxySwitch').checked = false;
       }
     }
-  
+
     async testProfile(index) {
       const profile = this.profiles[index];
       this.showStatus('Testing connection...');
-      
+
       // 防止并发测试
       if (this.isTesting) {
         this.showStatus('✗ Another test is already in progress', true);
         return;
       }
-      
+
       this.isTesting = true;
       let originalConfig = null;
-      
+
       try {
         // 保存当前实际代理配置
         const currentProxySettings = await chrome.proxy.settings.get({});
         originalConfig = currentProxySettings.value;
-        
+
         // 临时设置要测试的代理
-        await chrome.runtime.sendMessage({ 
-          type: 'SET_PROXY', 
-          config: profile.config 
+        await chrome.runtime.sendMessage({
+          type: 'SET_PROXY',
+          config: profile.config
         });
-        
+
         // 测试连接
         const response = await chrome.runtime.sendMessage({
           type: 'TEST_PROXY'
         });
-        
+
         // 始终恢复到保存的原始配置
         await this.restoreOriginalConfig(originalConfig);
-        
+
         if (response.success) {
           this.showStatus(`✓ Test successful: ${this.escapeHtml(response.ip)}`);
         } else {
@@ -594,7 +616,7 @@ class SKYProxy {
       } catch (error) {
         console.error('Test error:', error);
         this.showStatus('✗ Test failed', true);
-        
+
         // 确保在异常情况下也恢复原始配置
         if (originalConfig !== null) {
           try {
@@ -612,19 +634,19 @@ class SKYProxy {
     async restoreOriginalConfig(originalConfig) {
       if (!originalConfig) {
         // 如果原配置为空或无效，设置为直连模式
-        await chrome.runtime.sendMessage({ 
-          type: 'SET_PROXY', 
-          config: { mode: "direct" } 
+        await chrome.runtime.sendMessage({
+          type: 'SET_PROXY',
+          config: { mode: "direct" }
         });
       } else {
         // 恢复原始配置
-        await chrome.runtime.sendMessage({ 
-          type: 'SET_PROXY', 
-          config: originalConfig 
+        await chrome.runtime.sendMessage({
+          type: 'SET_PROXY',
+          config: originalConfig
         });
       }
     }
-  
+
     async disableProxy() {
       const config = { mode: "direct" };
       try {
@@ -639,7 +661,7 @@ class SKYProxy {
       }
     }
 }
-  
+
 // Initialize the proxy manager when the popup loads
 document.addEventListener('DOMContentLoaded', () => {
   new SKYProxy();
